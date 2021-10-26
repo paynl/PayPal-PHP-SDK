@@ -2,7 +2,6 @@
 
 namespace PayPal\Auth;
 
-use PayPal\Cache\AuthorizationCache;
 use PayPal\Common\PayPalResourceModel;
 use PayPal\Core\PayPalHttpConfig;
 use PayPal\Core\PayPalHttpConnection;
@@ -79,19 +78,23 @@ class OAuthTokenCredential extends PayPalResourceModel
      * @var Cipher
      */
     private $cipher;
-
+    
+    /** @var StorageInterface */
+    private $tokenStorage;
+    
     /**
      * Construct
      *
      * @param string $clientId     client id obtained from the developer portal
      * @param string $clientSecret client secret obtained from the developer portal
      */
-    public function __construct($clientId, $clientSecret, $targetSubject = null)
+    public function __construct($clientId, $clientSecret, $targetSubject = null, StorageInterface $tokenStorage = null)
     {
         $this->clientId = $clientId;
         $this->clientSecret = $clientSecret;
         $this->cipher = new Cipher($this->clientSecret);
         $this->targetSubject = $targetSubject;
+        $this->tokenStorage = $tokenStorage;
     }
 
     /**
@@ -123,50 +126,18 @@ class OAuthTokenCredential extends PayPalResourceModel
      */
     public function getAccessToken($config)
     {
-        // Check if we already have accessToken in Cache
-        if ($this->accessToken && (time() - $this->tokenCreateTime) < ($this->tokenExpiresIn - self::$expiryBufferTime)) {
+        if ($this->accessToken) {
             return $this->accessToken;
         }
-        // Check for persisted data first
-        $token = AuthorizationCache::pull($config, $this->clientId);
-        if ($token) {
-            // We found it
-            // This code block is for backward compatibility only.
-            if (array_key_exists('accessToken', $token)) {
-                $this->accessToken = $token['accessToken'];
-            }
-
-            $this->tokenCreateTime = $token['tokenCreateTime'];
-            $this->tokenExpiresIn = $token['tokenExpiresIn'];
-
-            // Case where we have an old unencrypted cache file
-            if (!array_key_exists('accessTokenEncrypted', $token)) {
-                AuthorizationCache::push($config, $this->clientId, $this->encrypt($this->accessToken), $this->tokenCreateTime, $this->tokenExpiresIn);
-            } else {
-                $this->accessToken = $this->decrypt($token['accessTokenEncrypted']);
-            }
+        
+        $accessToken = $this->tokenStorage->pull($this->getTokenKey($config));
+        if ($accessToken) {
+            return $this->accessToken = $accessToken;
         }
-
-        // Check if Access Token is not null and has not expired.
-        // The API returns expiry time as a relative time unit
-        // We use a buffer time when checking for token expiry to account
-        // for API call delays and any delay between the time the token is
-        // retrieved and subsequently used
-        if (
-            $this->accessToken != null &&
-            (time() - $this->tokenCreateTime) > ($this->tokenExpiresIn - self::$expiryBufferTime)
-        ) {
-            $this->accessToken = null;
-        }
-
-
-        // If accessToken is Null, obtain a new token
-        if ($this->accessToken == null) {
-            // Get a new one by making calls to API
-            $this->updateAccessToken($config);
-            AuthorizationCache::push($config, $this->clientId, $this->encrypt($this->accessToken), $this->tokenCreateTime, $this->tokenExpiresIn);
-        }
-
+        
+        $this->updateAccessToken($config);
+        
+        $this->tokenStorage->push($this->getTokenKey($config), $this->accessToken, $this->tokenExpiresIn);
         return $this->accessToken;
     }
 
@@ -313,5 +284,14 @@ class OAuthTokenCredential extends PayPalResourceModel
     public function decrypt($data)
     {
         return $this->cipher->decrypt($data);
+    }
+    
+    /**
+     * @param array $config
+     * @return string
+     */
+    private function getTokenKey($config)
+    {
+        return ! empty($config['mode']) && $config['mode'] === 'SANDBOX' ? 'TEST' : 'LIVE';
     }
 }
