@@ -78,10 +78,10 @@ class OAuthTokenCredential extends PayPalResourceModel
      * @var Cipher
      */
     private $cipher;
-    
+
     /** @var StorageInterface */
     private $tokenStorage;
-    
+
     /**
      * Construct
      *
@@ -126,19 +126,11 @@ class OAuthTokenCredential extends PayPalResourceModel
      */
     public function getAccessToken($config)
     {
-        if ($this->accessToken) {
-            return $this->accessToken;
+        if( ! $this->tokenStorage) {
+            return null;
         }
-        
-        $accessToken = $this->tokenStorage->pull($this->getTokenKey($config));
-        if ($accessToken) {
-            return $this->accessToken = $accessToken;
-        }
-        
-        $this->updateAccessToken($config);
-        
-        $this->tokenStorage->push($this->getTokenKey($config), $this->accessToken, $this->tokenExpiresIn);
-        return $this->accessToken;
+
+        return $this->tokenStorage->pullToken();
     }
 
 
@@ -285,7 +277,7 @@ class OAuthTokenCredential extends PayPalResourceModel
     {
         return $this->cipher->decrypt($data);
     }
-    
+
     /**
      * @param array $config
      * @return string
